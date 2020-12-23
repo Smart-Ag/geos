@@ -1,15 +1,11 @@
-use crate::{CoordDimensions, CoordSeq, Geometry as GGeom};
-use error::{GResult, Error};
-use geojson::{Value, Geometry};
-use std;
+use crate::{CoordDimensions, CoordSeq, Geometry as GGeometry};
+use error::{Error, GResult};
+use geojson::{Geometry, Value};
 
+use std::convert::{TryFrom, TryInto};
+use std::iter;
 
-pub trait TryInto<T> {
-    type Err;
-    fn try_into(self) -> Result<T, Self::Err>;
-}
-
-fn create_coord_seq_from_vec<'a>(coords: &'a [Vec<f64>]) -> Result<CoordSeq, Error> {
+fn create_coord_seq_from_vec<'a, 'b>(coords: &'a [Vec<f64>]) -> Result<CoordSeq<'b>, Error> {
     create_coord_seq(coords.iter(), coords.len())
 }
 
@@ -17,8 +13,8 @@ fn create_coord_seq<'a, 'b, It>(points: It, len: usize) -> Result<CoordSeq<'b>, 
 where
     It: Iterator<Item = &'a Vec<f64>>,
 {
-    let mut coord_seq = CoordSeq::new(len as u32, CoordDimensions::TwoD)
-        .expect("failed to create CoordSeq");
+    let mut coord_seq =
+        CoordSeq::new(len as u32, CoordDimensions::TwoD).expect("failed to create CoordSeq");
 
     for (i, p) in points.enumerate() {
         coord_seq.set_x(i, p[0])?;
@@ -29,7 +25,7 @@ where
 
 // We need to ensure that rings of polygons are closed
 // to create valid GEOS LinearRings (geojson crate doesn't enforce this for now)
-fn create_closed_coord_seq_from_vec<'a>(points: &'a [Vec<f64>]) -> Result<CoordSeq, Error> {
+fn create_closed_coord_seq_from_vec<'a, 'b>(points: &'a [Vec<f64>]) -> Result<CoordSeq<'b>, Error> {
     let nb_points = points.len();
     // if the geom is not closed we close it
     let is_closed = nb_points > 0 && points.first() == points.last();
@@ -37,86 +33,93 @@ fn create_closed_coord_seq_from_vec<'a>(points: &'a [Vec<f64>]) -> Result<CoordS
     // as in `from_geo` module
     let need_closing = nb_points > 0 && (!is_closed || nb_points == 3);
     if need_closing {
-        create_coord_seq(
-            points.iter().chain(std::iter::once(&points[0])),
-            nb_points + 1,
-        )
+        create_coord_seq(points.iter().chain(iter::once(&points[0])), nb_points + 1)
     } else {
         create_coord_seq(points.iter(), nb_points)
     }
 }
 
-impl<'a> TryInto<GGeom<'a>> for &'a Geometry {
-    type Err = Error;
+impl<'a, 'b> TryFrom<&'a Geometry> for GGeometry<'b> {
+    type Error = Error;
 
-    fn try_into(self) -> Result<GGeom<'a>, Self::Err> {
-        match self.value {
-            Value::Point(ref c) => {
-                GGeom::create_point(create_coord_seq(std::iter::once(c), 1)?)
-            },
-            Value::MultiPoint(ref pts) =>  {
-                let ggpts = pts.iter()
-                    .map(|pt| {
-                        GGeom::create_point(create_coord_seq(std::iter::once(pt), 1)?)
-                    })
-                    .collect::<GResult<Vec<GGeom>>>()?;
-                GGeom::create_multipoint(ggpts)
-            },
+    fn try_from(other: &'a Geometry) -> Result<GGeometry<'b>, Self::Error> {
+        match other.value {
+            Value::Point(ref c) => GGeometry::create_point(create_coord_seq(iter::once(c), 1)?),
+            Value::MultiPoint(ref pts) => {
+                let ggpts = pts
+                    .iter()
+                    .map(|pt| GGeometry::create_point(create_coord_seq(iter::once(pt), 1)?))
+                    .collect::<GResult<Vec<GGeometry>>>()?;
+                GGeometry::create_multipoint(ggpts)
+            }
             Value::LineString(ref line) => {
                 let coord_seq = create_coord_seq_from_vec(line.as_slice())?;
-                GGeom::create_line_string(coord_seq)
-            },
+                GGeometry::create_line_string(coord_seq)
+            }
             Value::MultiLineString(ref lines) => {
-                let gglines = lines.iter()
+                let gglines = lines
+                    .iter()
                     .map(|line| {
                         let coord_seq = create_coord_seq_from_vec(line.as_slice())?;
-                        GGeom::create_line_string(coord_seq)
+                        GGeometry::create_line_string(coord_seq)
                     })
-                    .collect::<GResult<Vec<GGeom>>>()?;
-                GGeom::create_multiline_string(gglines)
-            },
+                    .collect::<GResult<Vec<GGeometry>>>()?;
+                GGeometry::create_multiline_string(gglines)
+            }
             Value::Polygon(ref rings) => {
-                let exterior_ring = GGeom::create_linear_ring(
-                    create_closed_coord_seq_from_vec(rings[0].as_slice())?
+                let exterior_ring = GGeometry::create_linear_ring(
+                    create_closed_coord_seq_from_vec(rings[0].as_slice())?,
                 )?;
-                let interiors = rings.iter()
+                let interiors = rings
+                    .iter()
                     .skip(1)
                     .map(|r| {
-                        GGeom::create_linear_ring(
-                            create_closed_coord_seq_from_vec(r.as_slice())?)
+                        GGeometry::create_linear_ring(create_closed_coord_seq_from_vec(
+                            r.as_slice(),
+                        )?)
                     })
-                    .collect::<GResult<Vec<GGeom>>>()?;
-                GGeom::create_polygon(exterior_ring, interiors)
-            },
+                    .collect::<GResult<Vec<GGeometry>>>()?;
+                GGeometry::create_polygon(exterior_ring, interiors)
+            }
             Value::MultiPolygon(ref polygons) => {
-                let ggpolys = polygons.iter()
-                    .map(|rings|{
-                        let exterior_ring = GGeom::create_linear_ring(
-                            create_closed_coord_seq_from_vec(rings[0].as_slice())?
+                let ggpolys = polygons
+                    .iter()
+                    .map(|rings| {
+                        let exterior_ring = GGeometry::create_linear_ring(
+                            create_closed_coord_seq_from_vec(rings[0].as_slice())?,
                         )?;
-                        let interiors = rings.iter()
+                        let interiors = rings
+                            .iter()
                             .skip(1)
                             .map(|r| {
-                                GGeom::create_linear_ring(
-                                    create_closed_coord_seq_from_vec(r.as_slice())?)
+                                GGeometry::create_linear_ring(create_closed_coord_seq_from_vec(
+                                    r.as_slice(),
+                                )?)
                             })
-                            .collect::<GResult<Vec<GGeom>>>()?;
-                        GGeom::create_polygon(exterior_ring, interiors)
+                            .collect::<GResult<Vec<GGeometry>>>()?;
+                        GGeometry::create_polygon(exterior_ring, interiors)
                     })
-                    .collect::<GResult<Vec<GGeom>>>()?;
-                GGeom::create_multipolygon(ggpolys)
-            },
+                    .collect::<GResult<Vec<GGeometry>>>()?;
+                GGeometry::create_multipolygon(ggpolys)
+            }
             Value::GeometryCollection(ref geoms) => {
                 let _geoms = geoms
                     .iter()
-                    .map(|ref geom| geom.try_into())
-                    .collect::<GResult<Vec<GGeom>>>()?;
-                GGeom::create_geometry_collection(_geoms)
+                    .map(|geom| geom.try_into())
+                    .collect::<GResult<Vec<GGeometry>>>()?;
+                GGeometry::create_geometry_collection(_geoms)
             }
         }
     }
 }
 
+impl<'a> TryFrom<Geometry> for GGeometry<'a> {
+    type Error = Error;
+
+    fn try_from(other: Geometry) -> Result<GGeometry<'a>, Self::Error> {
+        GGeometry::try_from(&other)
+    }
+}
 
 #[cfg(test)]
 mod test {

@@ -865,6 +865,22 @@ impl<'a> Geometry<'a> {
         }
     }
 
+    pub fn buffer_with_params(&self, width: f64, quadsegs: i32, endcapstyle: i32, joinstyle: i32, mitrelimit: f64) -> GResult<Geometry<'a>> {
+        assert!(quadsegs > 0);
+        unsafe {
+            let ptr = GEOSBufferWithStyle_r(
+                self.get_raw_context(),
+                self.as_raw(),
+                width,
+                quadsegs as _,
+                endcapstyle as _,
+                joinstyle,
+                mitrelimit
+            );
+            Geometry::new_from_raw(ptr, self.clone_context(), "buffer")
+        }
+    }
+
     /// Returns `true` if the given geometry is empty.
     ///
     /// # Example

@@ -392,3 +392,45 @@ impl Into<c_int> for JoinStyle {
         }
     }
 }
+
+
+#[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]
+pub enum EndCapStyle {
+    Round,
+    Flat,
+    Square,
+}
+
+impl From<c_int> for EndCapStyle {
+    fn from(join_style: c_int) -> Self {
+        match join_style {
+            1 => EndCapStyle::Round,
+            2 => EndCapStyle::Flat,
+            3 => EndCapStyle::Square,
+            _ => panic!("Unknown join style"),
+        }
+    }
+}
+
+impl TryFrom<c_int> for EndCapStyle {
+    type Error = &'static str;
+
+    fn try_from(join_style: c_int) -> Result<Self, Self::Error> {
+        match join_style {
+            1 => Ok(EndCapStyle::Round),
+            2 => Ok(EndCapStyle::Flat),
+            3 => Ok(EndCapStyle::Square),
+            _ => Err("Unknown join style"),
+        }
+    }
+}
+
+impl Into<c_int> for EndCapStyle {
+    fn into(self) -> c_int {
+        match self {
+            EndCapStyle::Round => 1,
+            EndCapStyle::Flat => 2,
+            EndCapStyle::Square => 3,
+        }
+    }
+}

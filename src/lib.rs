@@ -94,6 +94,8 @@ mod traits;
 mod wkb_writer;
 mod wkt_writer;
 
+pub use enums::{JoinStyle, EndCapStyle};
+
 pub(crate) use traits::{
     AsRaw,
 };
